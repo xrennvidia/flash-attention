@@ -55,7 +55,8 @@ void set_params_fprop(FMHA_fprop_params &params,
                       float p_dropout,
                       float softmax_scale,
                       bool is_causal,
-                      int num_splits) {
+                      int num_splits,
+                      bool return_fp32_out_tmp) {
 
     Data_type acc_type = DATA_TYPE_FP32;
     Data_type data_type = !(q.dtype() == torch::kBFloat16) ? DATA_TYPE_FP16 : DATA_TYPE_BF16;
@@ -119,6 +120,7 @@ void set_params_fprop(FMHA_fprop_params &params,
 
     params.is_causal = is_causal;
     params.num_splits = num_splits;
+    params.return_fp32_out_tmp = return_fp32_out_tmp;
 }
 
 void set_params_dgrad(FMHA_dgrad_params &params,
@@ -158,7 +160,8 @@ void set_params_dgrad(FMHA_dgrad_params &params,
                      p_dropout,
                      softmax_scale,
                      is_causal,
-                     num_splits);
+                     num_splits,
+                     /*return_fp32_out_tmp=*/false);
 
     // Set the pointers and strides.
     params.dq_ptr = dq.data_ptr();
@@ -201,7 +204,8 @@ mha_fwd(const at::Tensor &q,         // total_q x num_heads x head_size, total_q
         const bool is_causal,
         const bool return_softmax,
         const int num_splits,
-        c10::optional<at::Generator> gen_) {
+        c10::optional<at::Generator> gen_,
+        const bool return_fp32_out_tmp) {
 
     auto dprops = at::cuda::getCurrentDeviceProperties();
     bool is_sm75 = dprops->major == 7 && dprops->minor == 5;
@@ -272,7 +276,7 @@ mha_fwd(const at::Tensor &q,         // total_q x num_heads x head_size, total_q
     // auto o = torch::empty({ total_q, num_heads, head_size }, opts);
 
     at::Tensor o_tmp;
-    if (loop) { o_tmp = torch::empty({total_q, num_heads, head_size}, opts.dtype(at::kFloat)); }
+    if (loop || return_fp32_out_tmp) { o_tmp = torch::empty({total_q, num_heads, head_size}, opts.dtype(at::kFloat)); }
 
     auto softmax_lse = torch::empty({batch_size, num_heads, max_seqlen_q}, opts.dtype(at::kFloat));
     // auto softmax_lse = torch::full({batch_size, num_heads, max_seqlen_k}, -std::numeric_limits<float>::infinity(), opts.dtype(at::kFloat));
@@ -298,13 +302,14 @@ mha_fwd(const at::Tensor &q,         // total_q x num_heads x head_size, total_q
                      q, k, v, out,
                      cu_seqlens_q.data_ptr(),
                      cu_seqlens_k.data_ptr(),
-                     loop ? o_tmp.data_ptr() : nullptr,
+                     (loop || return_fp32_out_tmp) ? o_tmp.data_ptr() : nullptr,
                      return_softmax ? s.data_ptr() : nullptr,
                      softmax_lse.data_ptr(),
                      p_dropout,
                      softmax_scale,
                      is_causal,
-                     num_splits);
+                     num_splits,
+                     return_fp32_out_tmp);
 
     // number of times random will be generated per thread, to offset philox counter in thc random
     // state
@@ -326,6 +331,7 @@ mha_fwd(const at::Tensor &q,         // total_q x num_heads x head_size, total_q
     std::vector<at::Tensor> result = {softmax_lse};
     result.push_back(rng_state);
     if (return_softmax) {result.push_back(s);}
+    if (return_fp32_out_tmp) {result.push_back(o_tmp);}
     return result;
 }
 
@@ -619,7 +625,8 @@ mha_fwd_block(const at::Tensor &q,         // total_q x num_heads x head_size, t
                      p_dropout,
                      softmax_scale,
                      is_causal,
-                     /*num_splits=*/1);
+                     /*num_splits=*/1,
+                     /*return_fp32_out_tmp=*/false);
     launch_params.params.blockmask = static_cast<int *>(blockmask.data_ptr());
 
     run_fmha_block_fp16_sm80(launch_params, /*configure=*/ true);

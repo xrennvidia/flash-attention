@@ -638,7 +638,7 @@ inline __device__ void device_1xN_(const Params &params, const int bidb, const i
         // }
 
         // Output the values.
-        if (is_final_write) {
+        if (is_final_write && !params.return_fp32_out_tmp) {
             gmem_o.template store<elem_type>(out, 0);
             gmem_o.move(step_stride);
         } else {
@@ -646,7 +646,7 @@ inline __device__ void device_1xN_(const Params &params, const int bidb, const i
         }
 
         // Move to the next part of the output.
-        if (!(Is_first && Is_last)) { gmem_o_tmp.move(step_stride); }
+        if (!(Is_first && Is_last) || params.return_fp32_out_tmp) { gmem_o_tmp.move(step_stride); }
         gemm_q_k.reload_k();
 
         // Make sure we are reading from the correct buffer.

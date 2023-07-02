@@ -12,7 +12,7 @@ def _get_block_size(device, head_dim, is_dropout):
 
 def _flash_attn_forward(q, k, v, out, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
                         dropout_p, softmax_scale, causal, return_softmax, num_splits=0,
-                        generator=None):
+                        generator=None, return_fp32_out_tmp=False):
     """
     num_splits: how much to parallelize over the seqlen_q dimension. num_splits=0 means
     it will be set by an internal heuristic. We're exposing num_splits mostly for benchmarking.
@@ -20,12 +20,16 @@ def _flash_attn_forward(q, k, v, out, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, 
     """
     softmax_lse, rng_state, *rest = flash_attn_cuda.fwd(
         q, k, v, out, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, dropout_p,
-        softmax_scale, False, causal, return_softmax, num_splits, generator
+        softmax_scale, False, causal, return_softmax, num_splits, generator, return_fp32_out_tmp
     )
     # if out.isnan().any() or softmax_lse.isnan().any():
     #     breakpoint()
     S_dmask = rest[0] if return_softmax else None
-    return out, softmax_lse, rng_state, S_dmask
+    fp32_out_tmp = rest[-1] if return_fp32_out_tmp else None
+    if return_fp32_out_tmp:
+        return out, softmax_lse, rng_state, S_dmask, fp32_out_tmp
+    else:
+        return out, softmax_lse, rng_state, S_dmask
 
 
 def _flash_attn_backward(dout, q, k, v, out, softmax_lse, dq, dk, dv, cu_seqlens_q, cu_seqlens_k,
