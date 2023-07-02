@@ -365,7 +365,8 @@ mha_bwd(const at::Tensor &dout,  // total_q x num_heads, x head_size
         const bool is_causal,
         const int num_splits,
         c10::optional<at::Generator> gen_,
-        c10::optional<at::Tensor> &rng_state
+        c10::optional<at::Tensor> &rng_state,
+        const bool return_fp32_dq_tmp
 ) {
     auto dprops = at::cuda::getCurrentDeviceProperties();
     bool is_sm75 = dprops->major == 7 && dprops->minor == 5;
@@ -454,7 +455,7 @@ mha_bwd(const at::Tensor &dout,  // total_q x num_heads, x head_size
     auto opts = q.options();
     auto softmax_d = torch::empty({batch_size, num_heads, max_seqlen_q}, opts.dtype(at::kFloat));
     at::Tensor dq_tmp;
-    if (loop) { dq_tmp = torch::empty({total_q, num_heads, head_size}, opts.dtype(at::kFloat)); }
+    if (loop || return_fp32_dq_tmp) { dq_tmp = torch::empty({total_q, num_heads, head_size}, opts.dtype(at::kFloat)); }
 
     if( zero_tensors ) {
         dq.zero_();
@@ -475,7 +476,7 @@ mha_bwd(const at::Tensor &dout,  // total_q x num_heads, x head_size
                      dq, dk, dv,
                      cu_seqlens_q.data_ptr(),
                      cu_seqlens_k.data_ptr(),
-                     loop ? dq_tmp.data_ptr() : nullptr,
+                     (loop || return_fp32_dq_tmp) ? dq_tmp.data_ptr() : nullptr,
                      dout.data_ptr(),
                      softmax_lse.data_ptr(),
                      softmax_d.data_ptr(),
@@ -486,7 +487,7 @@ mha_bwd(const at::Tensor &dout,  // total_q x num_heads, x head_size
 
     launch(params, stream, /*configure=*/true);
 
-    if (params.num_splits > 1) {
+    if (params.num_splits > 1 || return_fp32_dq_tmp) {
         if (!dq_tmp.defined()) {
             dq_tmp = torch::zeros({total_q, num_heads, head_size}, opts.dtype(at::kFloat));
             params.o_tmp_ptr = dq_tmp.data_ptr();  // o_tmp stores dq_tmp in the backward pass
@@ -513,11 +514,15 @@ mha_bwd(const at::Tensor &dout,  // total_q x num_heads, x head_size
 
     launch(params, stream, /*configure=*/false);
 
-    if (params.num_splits > 1) {
+    if (params.num_splits > 1 && !return_fp32_dq_tmp) {
         dq.copy_(dq_tmp);
     }
 
-    return { dq, dk, dv, softmax_d };
+    if (return_fp32_dq_tmp) {
+        return { dq, dk, dv, softmax_d, dq_tmp };
+    } else {
+        return { dq, dk, dv, softmax_d };
+    }
 }
 
 std::vector<at::Tensor>
