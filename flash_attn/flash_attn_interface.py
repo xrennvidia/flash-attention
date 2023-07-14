@@ -34,7 +34,8 @@ def _flash_attn_forward(q, k, v, out, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, 
 
 def _flash_attn_backward(dout, q, k, v, out, softmax_lse, dq, dk, dv, cu_seqlens_q, cu_seqlens_k,
                          max_seqlen_q, max_seqlen_k, dropout_p, softmax_scale, causal,
-                         rng_state=None, num_splits=0, generator=None, return_fp32_dq_tmp=False):
+                         rng_state=None, num_splits=0, generator=None,
+                         return_fp32_dq_tmp=False, skip_dqkv_scale=False):
     """
     num_splits: whether to parallelize over the seqlen_k dimension (num_splits > 1) or
     not (num_splits = 1). num_splits=0 means it will be set by an internal heuristic.
@@ -46,7 +47,7 @@ def _flash_attn_backward(dout, q, k, v, out, softmax_lse, dq, dk, dv, cu_seqlens
     _, _, _, softmax_d, *rest = flash_attn_cuda.bwd(
         dout, q, k, v, out, softmax_lse, dq, dk, dv, cu_seqlens_q, cu_seqlens_k,
         max_seqlen_q, max_seqlen_k, dropout_p, softmax_scale, False, causal,
-        num_splits, generator, rng_state, return_fp32_dq_tmp)
+        num_splits, generator, rng_state, return_fp32_dq_tmp, skip_dqkv_scale)
     # if dk.isnan().any() or dk.isnan().any() or dv.isnan().any() or softmax_d.isnan().any():
     #     breakpoint()
     if return_fp32_dq_tmp:

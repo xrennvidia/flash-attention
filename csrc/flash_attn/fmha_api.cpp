@@ -57,7 +57,8 @@ void set_params_fprop(FMHA_fprop_params &params,
                       bool is_causal,
                       int num_splits,
                       bool return_fp32_out_tmp,
-                      bool return_fp32_dq_tmp) {
+                      bool return_fp32_dq_tmp,
+                      bool skip_dqkv_scale) {
 
     Data_type acc_type = DATA_TYPE_FP32;
     Data_type data_type = !(q.dtype() == torch::kBFloat16) ? DATA_TYPE_FP16 : DATA_TYPE_BF16;
@@ -115,7 +116,7 @@ void set_params_fprop(FMHA_fprop_params &params,
     params.p_dropout_in_uint = uint32_t(std::floor(params.p_dropout * 4294967295.0));
     params.p_dropout_in_uint16_t = uint16_t(std::floor(params.p_dropout * 65535.0));
     params.rp_dropout = 1.f / params.p_dropout;
-    params.scale_bmm1_rp_dropout = params.rp_dropout * params.scale_bmm1f;
+    params.scale_bmm1_rp_dropout = skip_dqkv_scale ? 1.0 : params.rp_dropout * params.scale_bmm1f;
     TORCH_CHECK(p_dropout < 1.f);
     set_alpha(params.scale_dropout, params.rp_dropout, data_type);
 
@@ -151,7 +152,8 @@ void set_params_dgrad(FMHA_dgrad_params &params,
                       float softmax_scale,
                       bool is_causal,
                       int num_splits,
-                      bool return_fp32_dq_tmp) {
+                      bool return_fp32_dq_tmp,
+                      bool skip_dqkv_scale) {
 
     set_params_fprop(params,
                      b, seqlen_q, seqlen_k, h, d,
@@ -166,7 +168,8 @@ void set_params_dgrad(FMHA_dgrad_params &params,
                      is_causal,
                      num_splits,
                      /*return_fp32_out_tmp=*/false,
-                     return_fp32_dq_tmp);
+                     return_fp32_dq_tmp,
+                     skip_dqkv_scale);
 
     // Set the pointers and strides.
     params.dq_ptr = dq.data_ptr();
@@ -315,7 +318,8 @@ mha_fwd(const at::Tensor &q,         // total_q x num_heads x head_size, total_q
                      is_causal,
                      num_splits,
                      return_fp32_out_tmp,
-                     /*return_fp32_dq_tmp*/false);
+                     /*return_fp32_dq_tmp*/false,
+                     /*skip_dqkv_scale*/false);
 
     // number of times random will be generated per thread, to offset philox counter in thc random
     // state
@@ -372,7 +376,8 @@ mha_bwd(const at::Tensor &dout,  // total_q x num_heads, x head_size
         const int num_splits,
         c10::optional<at::Generator> gen_,
         c10::optional<at::Tensor> &rng_state,
-        const bool return_fp32_dq_tmp
+        const bool return_fp32_dq_tmp,
+        const bool skip_dqkv_scale
 ) {
     auto dprops = at::cuda::getCurrentDeviceProperties();
     bool is_sm75 = dprops->major == 7 && dprops->minor == 5;
@@ -490,7 +495,8 @@ mha_bwd(const at::Tensor &dout,  // total_q x num_heads, x head_size
                      softmax_scale,
                      is_causal,
                      num_splits,
-                     return_fp32_dq_tmp);
+                     return_fp32_dq_tmp,
+                     skip_dqkv_scale);
 
     launch(params, stream, /*configure=*/true);
 
@@ -639,7 +645,8 @@ mha_fwd_block(const at::Tensor &q,         // total_q x num_heads x head_size, t
                      is_causal,
                      /*num_splits=*/1,
                      /*return_fp32_out_tmp=*/false,
-                     /*return_fp32_dq_tmp=*/false);
+                     /*return_fp32_dq_tmp=*/false,
+                     /*skip_dqkv_scale*/false);
     launch_params.params.blockmask = static_cast<int *>(blockmask.data_ptr());
 
     run_fmha_block_fp16_sm80(launch_params, /*configure=*/ true);
@@ -787,7 +794,8 @@ mha_bwd_block(const at::Tensor &dout,  // total x num_heads, x head_size
                      softmax_scale,
                      is_causal,
                      /*num_splits=*/1,
-                     /*return_fp32_dq_tmp*/false);
+                     /*return_fp32_dq_tmp*/false,
+                     /*skip_dqkv_scale*/false);
     params.blockmask = static_cast<int *>(blockmask.data_ptr());
 
     auto gen = at::get_generator_or_default<at::CUDAGeneratorImpl>(
