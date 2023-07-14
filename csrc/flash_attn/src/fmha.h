@@ -133,6 +133,7 @@ struct FMHA_fprop_params : public Qkv_params {
 
     int num_splits; // How many SMs per attention matrix.
     bool return_fp32_out_tmp;
+    bool return_fp32_dq_tmp;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

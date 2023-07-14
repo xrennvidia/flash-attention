@@ -25,8 +25,8 @@ def _flash_attn_forward(q, k, v, out, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, 
     # if out.isnan().any() or softmax_lse.isnan().any():
     #     breakpoint()
     S_dmask = rest[0] if return_softmax else None
-    fp32_out_tmp = rest[-1] if return_fp32_out_tmp else None
     if return_fp32_out_tmp:
+        fp32_out_tmp = rest[-1]
         return out, softmax_lse, rng_state, S_dmask, fp32_out_tmp
     else:
         return out, softmax_lse, rng_state, S_dmask

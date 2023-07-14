@@ -56,7 +56,8 @@ void set_params_fprop(FMHA_fprop_params &params,
                       float softmax_scale,
                       bool is_causal,
                       int num_splits,
-                      bool return_fp32_out_tmp) {
+                      bool return_fp32_out_tmp,
+                      bool return_fp32_dq_tmp) {
 
     Data_type acc_type = DATA_TYPE_FP32;
     Data_type data_type = !(q.dtype() == torch::kBFloat16) ? DATA_TYPE_FP16 : DATA_TYPE_BF16;
@@ -120,7 +121,9 @@ void set_params_fprop(FMHA_fprop_params &params,
 
     params.is_causal = is_causal;
     params.num_splits = num_splits;
+
     params.return_fp32_out_tmp = return_fp32_out_tmp;
+    params.return_fp32_dq_tmp = return_fp32_dq_tmp;
 }
 
 void set_params_dgrad(FMHA_dgrad_params &params,
@@ -147,7 +150,8 @@ void set_params_dgrad(FMHA_dgrad_params &params,
                       float p_dropout,
                       float softmax_scale,
                       bool is_causal,
-                      int num_splits) {
+                      int num_splits,
+                      bool return_fp32_dq_tmp) {
 
     set_params_fprop(params,
                      b, seqlen_q, seqlen_k, h, d,
@@ -161,7 +165,8 @@ void set_params_dgrad(FMHA_dgrad_params &params,
                      softmax_scale,
                      is_causal,
                      num_splits,
-                     /*return_fp32_out_tmp=*/false);
+                     /*return_fp32_out_tmp=*/false,
+                     return_fp32_dq_tmp);
 
     // Set the pointers and strides.
     params.dq_ptr = dq.data_ptr();
@@ -309,7 +314,8 @@ mha_fwd(const at::Tensor &q,         // total_q x num_heads x head_size, total_q
                      softmax_scale,
                      is_causal,
                      num_splits,
-                     return_fp32_out_tmp);
+                     return_fp32_out_tmp,
+                     /*return_fp32_dq_tmp*/false);
 
     // number of times random will be generated per thread, to offset philox counter in thc random
     // state
@@ -483,7 +489,8 @@ mha_bwd(const at::Tensor &dout,  // total_q x num_heads, x head_size
                      p_dropout,
                      softmax_scale,
                      is_causal,
-                     num_splits);
+                     num_splits,
+                     return_fp32_dq_tmp);
 
     launch(params, stream, /*configure=*/true);
 
@@ -631,7 +638,8 @@ mha_fwd_block(const at::Tensor &q,         // total_q x num_heads x head_size, t
                      softmax_scale,
                      is_causal,
                      /*num_splits=*/1,
-                     /*return_fp32_out_tmp=*/false);
+                     /*return_fp32_out_tmp=*/false,
+                     /*return_fp32_dq_tmp=*/false);
     launch_params.params.blockmask = static_cast<int *>(blockmask.data_ptr());
 
     run_fmha_block_fp16_sm80(launch_params, /*configure=*/ true);
@@ -778,7 +786,8 @@ mha_bwd_block(const at::Tensor &dout,  // total x num_heads, x head_size
                      p_dropout,
                      softmax_scale,
                      is_causal,
-                     /*num_splits=*/1);
+                     /*num_splits=*/1,
+                     /*return_fp32_dq_tmp*/false);
     params.blockmask = static_cast<int *>(blockmask.data_ptr());
 
     auto gen = at::get_generator_or_default<at::CUDAGeneratorImpl>(

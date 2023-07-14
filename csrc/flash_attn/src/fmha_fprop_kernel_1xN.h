@@ -646,7 +646,7 @@ inline __device__ void device_1xN_(const Params &params, const int bidb, const i
         }
 
         // Move to the next part of the output.
-        if (!(Is_first && Is_last) || params.return_fp32_out_tmp) { gmem_o_tmp.move(step_stride); }
+        if (!(Is_first && Is_last)) { gmem_o_tmp.move(step_stride); }
         gemm_q_k.reload_k();
 
         // Make sure we are reading from the correct buffer.

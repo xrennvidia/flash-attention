@@ -688,10 +688,15 @@ inline __device__ void compute_dq_dk_dv_1xN_one_iter(const Params &params, Prng 
                     // dq_out[jj] = fmha::fmul4(dq_out[jj], params.scale_bmm1f);
                     dq_out[jj] = fmha::fmul4(dq_out[jj], params.scale_bmm1_rp_dropout);
                 }
-                // Output the values.
-                gmem_dq.template store<elem_type>(dq_out, 0);
-                // Move to the next part of the output.
-                gmem_dq.move();
+                if (!params.return_fp32_dq_tmp) {
+                    // Output the values.
+                    gmem_dq.template store<elem_type>(dq_out, 0);
+                    // Move to the next part of the output.
+                    gmem_dq.move();
+                } else {
+                    // Output the values.
+                    gmem_dq_tmp.store(dq_out, 0);
+                }
                 // TODO: for parallel, need to deal with the dropout scaling
             } else  {
                 // Output the values.
